@@ -175,28 +175,77 @@ def _tmdb_raw(path, **params):
         return None
 
 
+INVISIBLE = re.compile(r'[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]')   # LRM, zero-width space...
+
+
 def file_title(t):
     """File-name safe version of a title: 'Star Wars: A New Hope' -> 'Star Wars - A New Hope'."""
-    return safe(re.sub(r'\s*:\s+', ' - ', t))
+    return safe(re.sub(r'\s*:\s+', ' - ', INVISIBLE.sub('', t)))
+
+
+def _known_titles(det, kind):
+    """Every title TMDB knows for this film / show: original, translations, alternative titles."""
+    key = 'title' if kind == 'movie' else 'name'
+    out = {det.get(key), det.get('original_' + key)}
+    for t in (det.get('translations') or {}).get('translations', []):
+        out.add((t.get('data') or {}).get(key))
+    alt = det.get('alternative_titles') or {}
+    for t in alt.get('titles', []) + alt.get('results', []):
+        out.add(t.get('title'))
+    return {k for k in (fm.match_key(INVISIBLE.sub('', x)) for x in out if x) if k}
+
+
+def _same_work(current, known):
+    """True when the current name is one of the titles TMDB knows (or contains / is contained in
+    one of them, as whole words: 'James Bond 007 - Skyfall' / 'Skyfall'). Guards against TMDB
+    returning another film, e.g. 'Nausicaa' -> 'Le Vaisseau fantome'."""
+    for v in fm.title_variants(current):
+        k = fm.match_key(v)
+        if not k:
+            continue
+        for t in known:
+            short, long_ = sorted((k, t), key=len)
+            if k == t or (len(short) >= 4 and f" {short} " in f" {long_} "):
+                return True
+    return False
+
+
+def _has_translation(det, lang, kind):
+    """TMDB returns the default (often English) title when it has none in `lang`: detect that."""
+    key = 'title' if kind == 'movie' else 'name'
+    code = lang[:2]
+    if det.get('original_language') == code:
+        return True
+    for t in (det.get('translations') or {}).get('translations', []):
+        if t.get('iso_639_1') == code and (len(lang) == 2 or t.get('iso_3166_1') == lang[3:]) \
+                and (t.get('data') or {}).get(key):
+            return True
+    return False
 
 
 def localized_movie(name, lang):
-    """'Le Roi Lion (1994)', 'en' -> 'The Lion King (1994)'. None = keep the current name."""
+    """'Le Roi Lion (1994)', 'en' -> 'The Lion King (1994)'. None = keep the current name.
+    An edition tag is kept: 'Le Hobbit ... Version Longue (2012)' -> '... (2012) - Version Longue'."""
     cache = _title_cache_get()
-    ck = f'm|{lang}|{name}'
+    ck = f'm2|{lang}|{name}'
     if ck in cache:
         return cache[ck]
     res = None
     m = re.match(r'^(.*?)\s*\(((?:19|20)\d\d)\)$', name)
-    year = int(m.group(2)) if m else None
-    hit = fm.resolve_movie((name, ()))
-    det = _tmdb_raw(f"movie/{hit['id']}", language=lang) if hit else None
-    if det and det.get('title'):
-        ty = int((det.get('release_date') or '0000')[:4] or 0)
-        if not year or not ty or abs(ty - year) <= 1:          # a different year = probably a wrong match
-            new = file_title(det['title']) + (f" ({year or ty})" if (year or ty) else '')
-            if fm.match_key(new) != fm.match_key(name):
-                res = new
+    if m:                                                    # no year = ambiguous: never translated
+        title, year = m.group(1), int(m.group(2))
+        em = fm.EDITION_TAIL.search(title)
+        edition = em.group(0).strip() if em else ''
+        hit = fm.resolve_movie((name, ()))
+        det = _tmdb_raw(f"movie/{hit['id']}", language=lang,
+                        append_to_response='translations,alternative_titles') if hit else None
+        if det and det.get('title') and _has_translation(det, lang, 'movie') \
+                and _same_work(title, _known_titles(det, 'movie')):
+            ty = int((det.get('release_date') or '0000')[:4] or 0)
+            if not ty or abs(ty - year) <= 1:                # a different year = probably a wrong match
+                new = f"{file_title(det['title'])} ({year})" + (f" - {edition}" if edition else '')
+                if fm.match_key(new) != fm.match_key(name):
+                    res = new
     cache[ck] = res
     return res
 
@@ -204,14 +253,16 @@ def localized_movie(name, lang):
 def localized_show(display, lang):
     """'Les Simpsons', 'en' -> 'The Simpsons'. None = keep the current name."""
     cache = _title_cache_get()
-    ck = f's|{lang}|{display}'
+    ck = f's2|{lang}|{display}'
     if ck in cache:
         return cache[ck]
     res = None
     k = fm.normalize_name(display)
     hit = fm.resolve_show((k, {'display': display, 'name': display, 'base': k, 'year': None}))
-    det = _tmdb_raw(f"tv/{hit['id']}", language=lang) if hit and hit.get('id') else None
-    if det and det.get('name'):
+    det = _tmdb_raw(f"tv/{hit['id']}", language=lang,
+                    append_to_response='translations,alternative_titles') if hit and hit.get('id') else None
+    if det and det.get('name') and _has_translation(det, lang, 'tv') \
+            and _same_work(display, _known_titles(det, 'tv')):
         new = file_title(det['name'])
         if new and fm.match_key(new) != fm.match_key(display):
             res = new
