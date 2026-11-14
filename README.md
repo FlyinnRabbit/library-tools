@@ -117,7 +117,8 @@ Created on first start; you can also write it yourself next to the scripts / `.e
   "anime_path": ["F:/Anime", "F:/Anime 2"],
   "ignore_shows": [],
   "ignore_collections": [],
-  "year_overrides": {}
+  "year_overrides": {},
+  "keep_names": []
 }
 ```
 
@@ -127,6 +128,7 @@ Created on first start; you can also write it yourself next to the scripts / `.e
 | `ignore_shows` | Shows left out of every check. Compared lowercase without punctuation; `"doctor who"` covers all its versions. |
 | `ignore_collections` | TMDB collections you don't want in the "missing films" report. |
 | `year_overrides` | Force a year for a title, e.g. `{"Hercules": 1997}` — useful when several films share a name. |
+| `keep_names` | Titles `rename_media` never translates, e.g. `["Le Chateau de Cagliostro"]` — for when TMDB gives an old or odd title. Year, accents and edition tags are ignored. |
 
 Delete `config.json` and `tmdb_key.txt` to start over. More advanced tweaks (title aliases, episodes to ignore, franchise aliases) are commented at the top of [`src/find_missing.py`](src/find_missing.py).
 

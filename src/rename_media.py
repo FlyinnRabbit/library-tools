@@ -270,9 +270,21 @@ def localized_show(display, lang):
     return res
 
 
+# Titles never translated, whatever the language chosen (TMDB sometimes gives an old or odd title).
+# Year and edition are ignored: "Le Chateau de Cagliostro" also covers "Le Chateau de Cagliostro (1979)".
+KEEP_NAMES = list(fm.load_config().get('keep_names', []))
+KEEP_KEYS = {fm.match_key(n) for n in KEEP_NAMES} - {''}
+
+
+def keep_name(name):
+    title = re.sub(r'\s*\((?:19|20)\d\d\)$', '', name)
+    return fm.match_key(fm.EDITION_TAIL.sub('', title)) in KEEP_KEYS or fm.match_key(title) in KEEP_KEYS
+
+
 def localized_map(fn, names, lang, label):
-    """{name: name in that language} for the names that change (parallel + cached on disk)."""
-    names = sorted(set(names))
+    """{name: name in that language} for the names that change (parallel + cached on disk).
+    Names listed in keep_names (config.json) are left alone."""
+    names = sorted(n for n in set(names) if not keep_name(n))
     res = fm.run_parallel(lambda n: fn(n, lang), names, label, workers=8)
     fm.cache_save()
     title_cache_save()
