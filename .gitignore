@@ -7,7 +7,7 @@ tmdb_cache.json
 config.json
 gallery/
 gallery_cache.json
-english_titles_cache.json
+titles_cache.json
 rename_plan.txt
 rename_log.json
 media_report.txt

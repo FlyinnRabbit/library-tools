@@ -17,8 +17,9 @@ What it does
     Optionally (you are asked) it also moves everything into  Show/Season 01/ ,
     specials into  Show/Season 00/  - the layout Plex / Jellyfin / Kodi expect.
 
-    Optionally (you are asked) it names movies and shows with their ENGLISH TMDB title:
-    Le Roi Lion (1994).mkv  ->  The Lion King (1994).mkv      (needs your TMDB key, see find_missing.py)
+    Optionally (you are asked) it names movies and shows with their TMDB title in the language
+    of your choice (en, fr, es, de, ja...):
+    Le Roi Lion (1994).mkv  ->  The Lion King (1994).mkv      (en - needs your TMDB key, see find_missing.py)
 
 Safety
     * Nothing changes until you type YES after the preview.
@@ -118,28 +119,38 @@ def folder_matches(folder, parsed_names):
 
 
 # ==========================================
-# ENGLISH TITLES (optional)
+# TITLES IN ANOTHER LANGUAGE (optional)
 # ==========================================
-EN_CACHE_FILE = os.path.join(HERE, "english_titles_cache.json")
-_en_cache = None
+TITLE_CACHE_FILE = os.path.join(HERE, "titles_cache.json")
+_title_cache = None
+LANG_RX = re.compile(r'^[a-z]{2}(?:-[A-Z]{2})?$')     # TMDB language code: "fr", "en-US", "pt-BR"...
 
 
-def _en_cache_get():
-    global _en_cache
-    if _en_cache is None:
+def parse_lang(answer):
+    """'fr' / 'FR' / 'pt-br' -> 'fr' / 'fr' / 'pt-BR'; '' or anything invalid -> None."""
+    a = answer.strip()
+    if not a:
+        return None
+    a = a[:2].lower() + a[2:].upper()
+    return a if LANG_RX.match(a) else None
+
+
+def _title_cache_get():
+    global _title_cache
+    if _title_cache is None:
         try:
-            with open(EN_CACHE_FILE, encoding='utf-8') as f:
-                _en_cache = json.load(f)
+            with open(TITLE_CACHE_FILE, encoding='utf-8') as f:
+                _title_cache = json.load(f)
         except (OSError, ValueError):
-            _en_cache = {}
-    return _en_cache
+            _title_cache = {}
+    return _title_cache
 
 
-def en_cache_save():
-    if _en_cache:
+def title_cache_save():
+    if _title_cache:
         try:
-            with open(EN_CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(_en_cache, f, ensure_ascii=False, indent=0)
+            with open(TITLE_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(_title_cache, f, ensure_ascii=False, indent=0)
         except OSError:
             pass
 
@@ -164,55 +175,56 @@ def _tmdb_raw(path, **params):
         return None
 
 
-def en_title(t):
-    """File-name safe version of an English title: 'Star Wars: A New Hope' -> 'Star Wars - A New Hope'."""
+def file_title(t):
+    """File-name safe version of a title: 'Star Wars: A New Hope' -> 'Star Wars - A New Hope'."""
     return safe(re.sub(r'\s*:\s+', ' - ', t))
 
 
-def english_movie(name):
-    """'Le Roi Lion (1994)' -> 'The Lion King (1994)'. None = keep the current name."""
-    cache = _en_cache_get()
-    ck = 'm|' + name
+def localized_movie(name, lang):
+    """'Le Roi Lion (1994)', 'en' -> 'The Lion King (1994)'. None = keep the current name."""
+    cache = _title_cache_get()
+    ck = f'm|{lang}|{name}'
     if ck in cache:
         return cache[ck]
     res = None
     m = re.match(r'^(.*?)\s*\(((?:19|20)\d\d)\)$', name)
     year = int(m.group(2)) if m else None
     hit = fm.resolve_movie((name, ()))
-    det = _tmdb_raw(f"movie/{hit['id']}", language='en-US') if hit else None
+    det = _tmdb_raw(f"movie/{hit['id']}", language=lang) if hit else None
     if det and det.get('title'):
         ty = int((det.get('release_date') or '0000')[:4] or 0)
         if not year or not ty or abs(ty - year) <= 1:          # a different year = probably a wrong match
-            new = en_title(det['title']) + (f" ({year or ty})" if (year or ty) else '')
+            new = file_title(det['title']) + (f" ({year or ty})" if (year or ty) else '')
             if fm.match_key(new) != fm.match_key(name):
                 res = new
     cache[ck] = res
     return res
 
 
-def english_show(display):
-    """'Les Simpsons' -> 'The Simpsons'. None = keep the current name."""
-    cache = _en_cache_get()
-    ck = 's|' + display
+def localized_show(display, lang):
+    """'Les Simpsons', 'en' -> 'The Simpsons'. None = keep the current name."""
+    cache = _title_cache_get()
+    ck = f's|{lang}|{display}'
     if ck in cache:
         return cache[ck]
     res = None
     k = fm.normalize_name(display)
-    det = fm.resolve_show((k, {'display': display, 'name': display, 'base': k, 'year': None}))
+    hit = fm.resolve_show((k, {'display': display, 'name': display, 'base': k, 'year': None}))
+    det = _tmdb_raw(f"tv/{hit['id']}", language=lang) if hit and hit.get('id') else None
     if det and det.get('name'):
-        new = en_title(det['name'])
+        new = file_title(det['name'])
         if new and fm.match_key(new) != fm.match_key(display):
             res = new
     cache[ck] = res
     return res
 
 
-def english_map(fn, names, label):
-    """{name: english name} for the names that change (parallel + cached on disk)."""
+def localized_map(fn, names, lang, label):
+    """{name: name in that language} for the names that change (parallel + cached on disk)."""
     names = sorted(set(names))
-    res = fm.run_parallel(fn, names, label, workers=8)
+    res = fm.run_parallel(lambda n: fn(n, lang), names, label, workers=8)
     fm.cache_save()
-    en_cache_save()
+    title_cache_save()
     return {n: r for n, r in zip(names, res) if r}
 
 
@@ -234,7 +246,7 @@ def collect(root, episodic=True):
     return items
 
 
-def build_plan(root, organize=False, english=False):
+def build_plan(root, organize=False, lang=None):
     """-> dict(ops=[...], unchanged=n, unparsed=[names], conflicts=[...], total=n)
 
     Show name: the TOP-MOST folder under `root` that is a show folder ("Reacher",
@@ -316,9 +328,9 @@ def build_plan(root, organize=False, english=False):
             it['display'] = safe(pretty(spelling[k].most_common(1)[0][0]))
             it['base'] = os.path.join(it['dir'], it['display']) if organize else None
     emap = {}
-    if english:
-        emap = english_map(english_show, [it['display'] for it in parsed_items if it.get('display')],
-                           "English show titles")
+    if lang:
+        emap = localized_map(localized_show, [it['display'] for it in parsed_items if it.get('display')],
+                             lang, f"show titles ({lang})")
         for it in parsed_items:
             if it.get('display') in emap:
                 it['display'] = emap[it['display']]
@@ -342,7 +354,7 @@ def build_plan(root, organize=False, english=False):
         else:
             unchanged += 1
     plan = finalize(ops, unchanged, unparsed, len(items))
-    plan['english'] = emap
+    plan['translated'], plan['lang'] = emap, lang
     return plan
 
 
@@ -512,7 +524,7 @@ def lookup_years(names):
     return {n: (r or {'year': None, 'candidates': []}) for n, r in zip(names, res)}
 
 
-def build_movie_plan(root, organize=False, years=None, english=False):
+def build_movie_plan(root, organize=False, years=None, lang=None):
     items = collect(root, episodic=False)
     unparsed, named = [], []
     guessed, unresolved = {}, {}
@@ -532,8 +544,8 @@ def build_movie_plan(root, organize=False, years=None, english=False):
         (named if it['name'] else unparsed).append(it)
     unparsed = [os.path.join(i['dir'], i['file']) for i in unparsed]
     emap = {}
-    if english:
-        emap = english_map(english_movie, [it['name'] for it in named], "English movie titles")
+    if lang:
+        emap = localized_map(localized_movie, [it['name'] for it in named], lang, f"movie titles ({lang})")
         for it in named:
             it['name'] = emap.get(it['name'], it['name'])
     names_in_dir = defaultdict(set)
@@ -554,7 +566,7 @@ def build_movie_plan(root, organize=False, years=None, english=False):
             unchanged += 1
     plan = finalize(ops, unchanged, unparsed, len(items))
     plan['guessed'], plan['unresolved'] = guessed, unresolved
-    plan['english'] = emap
+    plan['translated'], plan['lang'] = emap, lang
     return plan
 
 
@@ -669,9 +681,9 @@ def describe(plan, label, root, lines, console_limit=25):
         lines.append(f"  {os.path.relpath(src, root)}\n    -> {os.path.relpath(dst, root)}")
         for s, d in op['moves'][1:]:
             lines.append(f"    (+ {os.path.basename(s)} -> {os.path.basename(d)})")
-    if plan.get('english'):
-        lines.append(f"\nENGLISH TITLES USED ({len(plan['english'])}):")
-        for a, b in sorted(plan['english'].items()):
+    if plan.get('translated'):
+        lines.append(f"\nTITLES IN '{plan['lang']}' USED ({len(plan['translated'])}):")
+        for a, b in sorted(plan['translated'].items()):
             lines.append(f"  {a}  ->  {b}")
     if plan.get('guessed'):
         lines.append(f"\nYEARS ADDED (TMDB or YEAR_OVERRIDES) ({len(plan['guessed'])} titles):")
@@ -710,8 +722,8 @@ def print_summary(plans):
             print(f"  {os.path.relpath(src, root)}\n    -> {os.path.relpath(dst, root)}")
         if len(plan['ops']) > 15:
             print(f"  ... and {len(plan['ops']) - 15} more (all in rename_plan.txt)")
-        if plan.get('english'):
-            print(f"  🇬🇧 English titles used: {len(plan['english'])} (listed in rename_plan.txt)")
+        if plan.get('translated'):
+            print(f"  🌐 Titles in '{plan['lang']}' used: {len(plan['translated'])} (listed in rename_plan.txt)")
         for src, dst, why in plan['conflicts'][:5]:
             print(f"  ⚠️ conflict ({why}): {os.path.basename(src)}")
         if plan.get('guessed') is not None and (plan['guessed'] or plan.get('unresolved')):
@@ -784,21 +796,30 @@ def main():
                 "movies loose in a folder -> 'Title (Year)/')  [y/N] ")
     organize = ans.strip().lower() in ('y', 'yes', 'o', 'oui')
 
-    a = input("\nName movies and shows with their ENGLISH title (from TMDB)? [y/N] ")
-    english = a.strip().lower() in ('y', 'yes', 'o', 'oui')
+    lang = None
+    while True:
+        a = input("\nRename titles in which language (from TMDB)?\n"
+                  "  en = English, fr = French, or any TMDB code (es, de, it, ja, pt-BR...)\n"
+                  "  Enter = keep the current names\n> ")
+        if not a.strip():
+            break
+        lang = parse_lang(a)
+        if lang:
+            break
+        print(f"'{a.strip()}' is not a language code (two letters, e.g. en, fr, es).")
 
     use_years = False
     if '3' in choice:
         a = input("\nMovies without a year in their name: look the year up on TMDB and add it? [Y/n] ")
         use_years = a.strip().lower() not in ('n', 'no', 'non')
-    if use_years or english:
+    if use_years or lang:
         key = fm.load_tmdb_key()
         if key:
             fm._state['key'] = key
             fm.cache_load()
         else:
-            print("⚠️ No TMDB key found (tmdb_key.txt next to the script) - no years and no English titles.")
-            use_years = english = False
+            print("⚠️ No TMDB key found (tmdb_key.txt next to the script) - no years and no translated titles.")
+            use_years, lang = False, None
 
     plans = []
     for label, paths, builder in libs:
@@ -815,10 +836,9 @@ def main():
                 if fm._state['auth_failed']:
                     print("⚠️ TMDB rejected the key - no years added.")
                     years = None
-                plans.append((label, root, build_movie_plan(root, organize, years, english)))
+                plans.append((label, root, build_movie_plan(root, organize, years, lang)))
             else:
-                plans.append((label, root, builder(root, organize, english=english) if builder is build_plan
-                              else builder(root, organize, english=english)))
+                plans.append((label, root, builder(root, organize, lang=lang)))
     if not plans:
         print("No library folder found. Set MOVIE_PATH / TV_PATH / ANIME_PATH at the top of find_missing.py.")
         input("\nPress Enter to exit...")

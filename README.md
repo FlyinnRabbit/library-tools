@@ -3,7 +3,7 @@
 Three small command-line tools to keep a home movie / TV / anime library tidy — the kind you serve with Jellyfin, Plex or Kodi.
 
 - **`find_missing`** — tells you what is missing: gaps in seasons, missing episodes, missing films of a collection, duplicates.
-- **`rename_media`** — gives every file a clean name (`Show - S01E05.mkv`, `Movie (1994).mkv`), with a preview first and a one-command undo.
+- **`rename_media`** — gives every file a clean name (`Show - S01E05.mkv`, `Movie (1994).mkv`), optionally with titles in the language of your choice, with a preview first and a one-command undo.
 - **`library_gallery`** — turns your library into a browsable poster gallery (one HTML page that works offline).
 
 They only need Python (or the Windows `.exe`) and a free [TMDB](https://www.themoviedb.org) API key. Nothing is ever deleted, and nothing is renamed until you confirm.
@@ -67,7 +67,7 @@ Scream.1996.1080p.BluRay.x264-GRP.mkv  ->  Scream (1996).mkv
 Subtitle and `.nfo` files next to a video are renamed along with it. You choose which libraries to process, then answer a few questions:
 
 - **Organise into folders?** `Show/Season 01/`, specials in `Season 00/` — the layout Jellyfin, Plex and Kodi expect.
-- **Use English titles?** `Le Roi Lion (1994).mkv` → `The Lion King (1994).mkv` (uses TMDB).
+- **Rename titles in which language?** Type a language code (`en`, `fr`, `es`, `de`, `ja`, `pt-BR`…) to use the TMDB title in that language, or press Enter to keep the current names. With `en`: `Le Roi Lion (1994).mkv` → `The Lion King (1994).mkv`; with `fr`, the other way round.
 - **Add missing years?** Movies without a year in their name get one from TMDB.
 
 Safety:
